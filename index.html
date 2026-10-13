@@ -2,132 +2,57 @@
 <html lang="en-us">
   <head>
     <meta charset="utf-8">
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Unity Web Player | Run Bigus Run</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Bigus Run</title>
     <link rel="shortcut icon" href="TemplateData/favicon.ico">
-    <link rel="stylesheet" href="TemplateData/style.css">
+    <style>
+      html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #111; overflow: hidden; }
+      #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; background: #111; }
+      #loading { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center;
+                 font-family: sans-serif; color: #fff; }
+      #loading h1 { font-size: 28px; margin: 0 0 14px; }
+      #bar { width: 260px; height: 10px; background: #333; border-radius: 5px; overflow: hidden; }
+      #fill { width: 0%; height: 100%; background: #e8554a; }
+      #err { position: fixed; left: 0; right: 0; bottom: 0; color: #fff; font-family: sans-serif; padding: 8px; display: none; background: #a22; }
+    </style>
   </head>
   <body>
-    <div id="unity-container" class="unity-desktop">
-      <canvas id="unity-canvas" width=960 height=600 tabindex="-1"></canvas>
-      <div id="unity-loading-bar">
-        <div id="unity-logo"></div>
-        <div id="unity-progress-bar-empty">
-          <div id="unity-progress-bar-full"></div>
-        </div>
-      </div>
-      <div id="unity-warning"> </div>
-      <div id="unity-footer">
-        <div id="unity-logo-title-footer"></div>
-        <div id="unity-fullscreen-button"></div>
-        <div id="unity-build-title">Run Bigus Run</div>
-      </div>
+    <canvas id="game" tabindex="-1"></canvas>
+    <div id="loading">
+      <h1>Bigus Run</h1>
+      <div id="bar"><div id="fill"></div></div>
     </div>
+    <div id="err"></div>
     <script>
-      var canvas = document.querySelector("#unity-canvas");
-
-      // Shows a temporary message banner/ribbon for a few seconds, or
-      // a permanent error message on top of the canvas if type=='error'.
-      // If type=='warning', a yellow highlight color is used.
-      // Modify or remove this function to customize the visually presented
-      // way that non-critical warnings and error messages are presented to the
-      // user.
-      function unityShowBanner(msg, type) {
-        var warningBanner = document.querySelector("#unity-warning");
-        function updateBannerVisibility() {
-          warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
-        }
-        var div = document.createElement('div');
-        div.innerHTML = msg;
-        warningBanner.appendChild(div);
-        if (type == 'error') div.style = 'background: red; padding: 10px;';
-        else {
-          if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
-          setTimeout(function() {
-            warningBanner.removeChild(div);
-            updateBannerVisibility();
-          }, 5000);
-        }
-        updateBannerVisibility();
-      }
-
+      var canvas = document.querySelector("#game");
       var buildUrl = "Build";
-      var loaderUrl = buildUrl + "/d5b1754b871f5c6e25888bce4c8f763f.loader.js";
+      var loaderUrl = buildUrl + "/b009b7e514de534a341bd77e6961ecee.loader.js";
       var config = {
         arguments: [],
-        dataUrl: buildUrl + "/b76da7939c5e0a32396ac0c11863ccc4.data",
-        frameworkUrl: buildUrl + "/c3f19a13302dd1bc13b540f7e1f9e424.framework.js",
-        codeUrl: buildUrl + "/7e3e558069c1f1eb3f0248cedc4cda31.wasm",
+        dataUrl: buildUrl + "/7a8464410be9a78650b4a4d8ff8736cc.data",
+        frameworkUrl: buildUrl + "/c48ff52276f11bb73e8fb4cb517cbe53.framework.js",
+        codeUrl: buildUrl + "/1e27b4247736fe2dd782e4bdf98bc62f.wasm",
         streamingAssetsUrl: "StreamingAssets",
         companyName: "TemmieManz",
-        productName: "Run Bigus Run",
+        productName: "Bigus Run",
         productVersion: "Beta",
-        showBanner: unityShowBanner,
-        // errorHandler: function(err, url, line) {
-        //    alert("error " + err + " occurred at line " + line);
-        //    // Return 'true' if you handled this error and don't want Unity
-        //    // to process it further, 'false' otherwise.
-        //    return true;
-        // },
+        showBanner: function (msg, type) {
+          if (type == "error") { var e = document.querySelector("#err"); e.style.display = "block"; e.textContent = msg; }
+        }
       };
-
-      // By default, Unity keeps WebGL canvas render target size matched with
-      // the DOM size of the canvas element (scaled by window.devicePixelRatio)
-      // Set this to false if you want to decouple this synchronization from
-      // happening inside the engine, and you would instead like to size up
-      // the canvas DOM size and WebGL render target sizes yourself.
-      // config.matchWebGLToCanvasSize = false;
-
-      // If you would like all file writes inside Unity Application.persistentDataPath
-      // directory to automatically persist so that the contents are remembered when
-      // the user revisits the site the next time, uncomment the following line:
-      // config.autoSyncPersistentDataPath = true;
-      // This autosyncing is currently not the default behavior to avoid regressing
-      // existing user projects that might rely on the earlier manual
-      // JS_FileSystem_Sync() behavior, but in future Unity version, this will be
-      // expected to change.
-
-      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
-        // Mobile device style: fill the whole browser client area with the game canvas:
-
-        var meta = document.createElement('meta');
-        meta.name = 'viewport';
-        meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
-        document.getElementsByTagName('head')[0].appendChild(meta);
-        document.querySelector("#unity-container").className = "unity-mobile";
-        canvas.className = "unity-mobile";
-
-        // To lower canvas resolution on mobile devices to gain some
-        // performance, uncomment the following line:
-        // config.devicePixelRatio = 1;
-
-
-      } else {
-        // Desktop style: Render the game canvas in a window that can be maximized to fullscreen:
-        canvas.style.width = "960px";
-        canvas.style.height = "600px";
-      }
-
-      document.querySelector("#unity-loading-bar").style.display = "block";
 
       var script = document.createElement("script");
       script.src = loaderUrl;
-      script.onload = () => {
-        createUnityInstance(canvas, config, (progress) => {
-          document.querySelector("#unity-progress-bar-full").style.width = 100 * progress + "%";
-              }).then((unityInstance) => {
-                document.querySelector("#unity-loading-bar").style.display = "none";
-                document.querySelector("#unity-fullscreen-button").onclick = () => {
-                  unityInstance.SetFullscreen(1);
-                };
-
-              }).catch((message) => {
-                alert(message);
-              });
-            };
-
+      script.onload = function () {
+        createUnityInstance(canvas, config, function (p) {
+          document.querySelector("#fill").style.width = (100 * p) + "%";
+        }).then(function () {
+          document.querySelector("#loading").style.display = "none";
+        }).catch(function (m) {
+          var e = document.querySelector("#err"); e.style.display = "block"; e.textContent = m;
+        });
+      };
       document.body.appendChild(script);
-
     </script>
   </body>
 </html>
