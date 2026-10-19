@@ -2,12 +2,16 @@
 <html lang="en-us">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Bigus Run</title>
     <link rel="shortcut icon" href="TemplateData/favicon.ico">
     <style>
-      html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #111; overflow: hidden; }
-      #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; background: #111; }
+      html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #111; overflow: hidden;
+                   position: fixed; inset: 0; overscroll-behavior: none; touch-action: none;
+                   -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+                   -webkit-tap-highlight-color: transparent; }
+      #game { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; display: block; background: #111;
+              touch-action: none; outline: none; }
       #loading { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center;
                  font-family: sans-serif; color: #fff; }
       #loading h1 { font-size: 28px; margin: 0 0 14px; }
@@ -41,6 +45,49 @@
         }
       };
 
+      // ---- phone / tablet fixes: exact canvas size, no zoom, no scroll, no page gestures ----
+      var isTouch = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+                    (navigator.maxTouchPoints > 1 && /Macintosh/i.test(navigator.userAgent));
+      function fitCanvas() {
+        var vv = window.visualViewport;
+        var w = Math.round(vv ? vv.width : window.innerWidth);
+        var h = Math.round(vv ? vv.height : window.innerHeight);
+        canvas.style.width = w + "px";
+        canvas.style.height = h + "px";
+        window.scrollTo(0, 0);
+      }
+      fitCanvas();
+      var fitTimer = 0;
+      function refit() {
+        fitCanvas();
+        clearTimeout(fitTimer);
+        // the browser bar / rotation settles a moment later, so fit again and tell the game
+        fitTimer = setTimeout(function () { fitCanvas(); window.dispatchEvent(new Event("resize")); }, 250);
+      }
+      window.addEventListener("resize", refit);
+      window.addEventListener("orientationchange", refit);
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", refit);
+        window.visualViewport.addEventListener("scroll", function () { window.scrollTo(0, 0); });
+      }
+      window.addEventListener("scroll", function () { window.scrollTo(0, 0); });
+      if (isTouch) {
+        var stop = function (e) { if (e.cancelable) e.preventDefault(); };
+        document.addEventListener("touchmove", stop, { passive: false });
+        document.addEventListener("gesturestart", stop);
+        document.addEventListener("gesturechange", stop);
+        document.addEventListener("gestureend", stop);
+        document.addEventListener("contextmenu", stop);
+        var lastTap = 0;
+        document.addEventListener("touchend", function (e) {
+          var now = Date.now();
+          if (now - lastTap < 350) stop(e); // no double tap zoom
+          lastTap = now;
+        }, { passive: false });
+        // sharp enough, but kinder to phones
+        config.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      }
+
       var script = document.createElement("script");
       script.src = loaderUrl;
       script.onload = function () {
@@ -48,6 +95,8 @@
           document.querySelector("#fill").style.width = (100 * p) + "%";
         }).then(function () {
           document.querySelector("#loading").style.display = "none";
+          refit();
+          canvas.focus();
         }).catch(function (m) {
           var e = document.querySelector("#err"); e.style.display = "block"; e.textContent = m;
         });
