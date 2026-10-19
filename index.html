@@ -26,12 +26,12 @@
     <script>
       var canvas = document.querySelector("#game");
       var buildUrl = "Build";
-      var loaderUrl = buildUrl + "/b009b7e514de534a341bd77e6961ecee.loader.js";
+      var loaderUrl = buildUrl + "/153786682dd44d94baeedc6853345d5e.loader.js";
       var config = {
         arguments: [],
-        dataUrl: buildUrl + "/599c5858b38e5bbde63b11dca945dce3.data",
-        frameworkUrl: buildUrl + "/c48ff52276f11bb73e8fb4cb517cbe53.framework.js",
-        codeUrl: buildUrl + "/1e27b4247736fe2dd782e4bdf98bc62f.wasm",
+        dataUrl: buildUrl + "/b771ced61051f7d4492b5e1da0af122f.data",
+        frameworkUrl: buildUrl + "/17ce31e33842490432a715b8cc529fc9.framework.js",
+        codeUrl: buildUrl + "/84a5de09fd68e7c3840d96f6cb9e190d.wasm",
         streamingAssetsUrl: "StreamingAssets",
         companyName: "TemmieManz",
         productName: "Bigus Run",
@@ -52,6 +52,11 @@
           var e = document.querySelector("#err"); e.style.display = "block"; e.textContent = m;
         });
       };
+      // asks "Leave site?" while a ranked run is going (the game turns this on and off)
+      window.bigusRunActive = false;
+      window.addEventListener("beforeunload", function (e) {
+        if (window.bigusRunActive) { e.preventDefault(); e.returnValue = ""; return ""; }
+      });
       document.body.appendChild(script);
     </script>
   </body>
