@@ -29,14 +29,183 @@
     </div>
     <div id="err"></div>
     <script>
+// Bigus Run net (browser side). Players connect straight to each other with WebRTC.
+// The rooms worker only introduces them. Loaded by index.html and by nettest.html.
+// The Unity game talks to this through BigusNet functions in RunGuard.jslib.
+(function () {
+  var LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  var STUN = [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }];
+  var CONNECT_MS = 12000;
+
+  var net = window.bigusNet = {
+    state: "idle",          // idle, signaling, ready, error
+    isHost: false, code: "", myId: -1, base: "", version: 0, myName: "Player",
+    peers: {},              // id -> { pc, r, u, rOpen, uOpen, attempt, timer, name }
+    events: [], inbox: [],
+    ws: null, ice: STUN, turnTried: false, hostTries: 0,
+    log: function () {}
+  };
+
+  function ev(o) { net.events.push(JSON.stringify(o)); }
+  var gone = {};
+  function emitClosed(id) { if (gone[id]) return; gone[id] = true; ev({ e: "closed", id: id }); }
+  function wsUrl(code, role) {
+    var b = net.base.replace(/\/+$/, "").replace(/^http/, "ws");
+    return b + "/room/" + code + "?role=" + role + "&v=" + net.version + "&n=" + encodeURIComponent(net.myName);
+  }
+  function randCode() {
+    var a = new Uint8Array(6); crypto.getRandomValues(a);
+    var s = ""; for (var i = 0; i < 6; i++) s += LETTERS.charAt(a[i] % LETTERS.length);
+    return s;
+  }
+  function sendSig(to, obj) {
+    if (net.ws && net.ws.readyState === 1) net.ws.send(JSON.stringify({ t: "sig", to: to, d: JSON.stringify(obj) }));
+  }
+
+  function fetchIce(cb) {
+    var url = net.base.replace(/\/+$/, "") + "/ice";
+    fetch(url).then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.iceServers && j.iceServers.length) net.ice = j.iceServers;
+      cb();
+    }).catch(function () { cb(); });
+  }
+
+  // ---------- one connection to one other player ----------
+  function newPeer(id, attempt) {
+    var old = net.peers[id];
+    if (old) { try { old.pc.close(); } catch (e) {} clearTimeout(old.timer); }
+    var pc = new RTCPeerConnection({ iceServers: net.ice });
+    var p = net.peers[id] = { pc: pc, r: null, u: null, rOpen: false, uOpen: false, attempt: attempt, timer: 0, done: false, name: (old && old.name) || "" };
+    pc.onicecandidate = function (e) {
+      if (e.candidate) sendSig(id, { a: attempt, k: "ice", s: e.candidate });
+    };
+    pc.onconnectionstatechange = function () {
+      var st = pc.connectionState;
+      if ((st === "failed" || st === "closed" || st === "disconnected") && p.done && net.peers[id] === p) {
+        p.done = false; emitClosed(id);
+      }
+    };
+    p.timer = setTimeout(function () { if (!p.done && net.peers[id] === p) retry(id); }, CONNECT_MS);
+    return p;
+  }
+  function hook(p, id, dc, chan) {
+    dc.binaryType = "arraybuffer";
+    dc.onopen = function () {
+      if (chan === 0) p.rOpen = true; else p.uOpen = true;
+      if (p.rOpen && p.uOpen && !p.done) {
+        p.done = true; clearTimeout(p.timer); delete gone[id];
+        ev({ e: "open", id: id, name: p.name });
+      }
+    };
+    dc.onclose = function () { if (p.done && net.peers[id] === p) { p.done = false; emitClosed(id); } };
+    dc.onmessage = function (m) {
+      var b = new Uint8Array(m.data), o = new Uint8Array(b.length + 2);
+      o[0] = id; o[1] = chan; o.set(b, 2);
+      net.inbox.push(o);
+      if (net.inbox.length > 4000) net.inbox.shift();
+    };
+  }
+  function retry(id) {
+    var p = net.peers[id];
+    if (!p || p.done) return;
+    if (net.turnTried) { ev({ e: "error", err: "connect-timeout", id: id }); return; }
+    net.turnTried = true;
+    fetchIce(function () { if (net.isHost) startOffer(id, p.attempt + 1); });   // the host starts again, the joiner follows its offer
+  }
+  function startOffer(id, attempt) {
+    var p = newPeer(id, attempt);
+    p.r = p.pc.createDataChannel("r", { ordered: true });
+    p.u = p.pc.createDataChannel("u", { ordered: false, maxRetransmits: 0 });
+    hook(p, id, p.r, 0); hook(p, id, p.u, 1);
+    p.pc.createOffer().then(function (o) { return p.pc.setLocalDescription(o); }).then(function () {
+      sendSig(id, { a: attempt, k: "offer", s: p.pc.localDescription });
+    }).catch(function (e) { ev({ e: "error", err: "offer", id: id }); });
+  }
+  function onSig(from, d) {
+    var m; try { m = JSON.parse(d); } catch (e) { return; }
+    var p = net.peers[from];
+    if (m.k === "offer" && !net.isHost) {
+      var go = function () {
+        p = newPeer(from, m.a);
+        p.pc.ondatachannel = function (e) { hook(p, from, e.channel, e.channel.label === "r" ? 0 : 1); if (e.channel.label === "r") p.r = e.channel; else p.u = e.channel; };
+        p.pc.setRemoteDescription(m.s).then(function () { return p.pc.createAnswer(); }).then(function (a) { return p.pc.setLocalDescription(a); }).then(function () {
+          sendSig(from, { a: m.a, k: "answer", s: p.pc.localDescription });
+        }).catch(function () { ev({ e: "error", err: "answer", id: from }); });
+      };
+      if (m.a > 0 && !net.turnTried) { net.turnTried = true; fetchIce(go); } else go();
+    } else if (m.k === "answer" && net.isHost && p && p.attempt === m.a) {
+      p.pc.setRemoteDescription(m.s).catch(function () {});
+    } else if (m.k === "ice" && p && p.attempt === m.a) {
+      p.pc.addIceCandidate(m.s).catch(function () {});
+    }
+  }
+
+  // ---------- signaling socket ----------
+  function openSocket(code, role, onFail) {
+    var ws = new WebSocket(wsUrl(code, role));
+    net.ws = ws;
+    ws.onmessage = function (m) {
+      var j; try { j = JSON.parse(m.data); } catch (e) { return; }
+      if (j.t === "hosted") { net.state = "ready"; net.code = code; net.myId = 0; ev({ e: "hosted", code: code }); }
+      else if (j.t === "welcome") { net.state = "ready"; net.code = code; net.myId = j.id; ev({ e: "joined", id: j.id, host: j.host }); net.peers[0] = net.peers[0] || { name: j.host }; }
+      else if (j.t === "join") { if (net.isHost) { net.peers[j.id] = { name: j.name, pc: { close: function () {} }, timer: 0, done: false, attempt: 0 }; fetchIceIfNeeded(function () { startOffer(j.id, 0); net.peers[j.id].name = j.name; }); ev({ e: "peer", id: j.id, name: j.name }); } }
+      else if (j.t === "left") { var q = net.peers[j.id]; if (q && q.done) return; if (q) { try { q.pc.close(); } catch (e) {} clearTimeout(q.timer); delete net.peers[j.id]; } emitClosed(j.id); }
+      else if (j.t === "closed") { var h = net.peers[0]; if (!(h && h.done)) emitClosed(0); }
+      else if (j.t === "sig") onSig(j.from, j.d);
+      else if (j.t === "error") { if (onFail) onFail(j.err); else { net.state = "error"; ev({ e: "error", err: j.err }); } }
+    };
+    ws.onerror = function () { if (net.ws === ws && net.state === "signaling") { net.state = "error"; ev({ e: "error", err: "network" }); } };
+    ws.onclose = function () { if (net.ws === ws && net.state === "signaling") { net.state = "error"; ev({ e: "error", err: "network" }); } };
+  }
+  function fetchIceIfNeeded(cb) { cb(); }
+
+  // ---------- public ----------
+  net.reset = function () {
+    for (var id in net.peers) { try { net.peers[id].pc.close(); } catch (e) {} clearTimeout(net.peers[id].timer); }
+    net.peers = {}; net.events = []; net.inbox = []; gone = {};
+    if (net.ws) { try { net.ws.onclose = null; net.ws.close(); } catch (e) {} }
+    net.ws = null; net.state = "idle"; net.code = ""; net.myId = -1; net.turnTried = false; net.ice = STUN;
+  };
+  net.host = function (base, version, name) {
+    net.reset(); net.isHost = true; net.base = base; net.version = version; net.myName = name || "Player"; net.state = "signaling"; net.hostTries = 0;
+    var tryCode = function () {
+      var code = randCode();
+      openSocket(code, "host", function (err) {
+        if (err === "taken" && ++net.hostTries < 6) tryCode();
+        else { net.state = "error"; ev({ e: "error", err: err }); }
+      });
+    };
+    tryCode();
+  };
+  net.join = function (base, code, version, name) {
+    net.reset(); net.isHost = false; net.base = base; net.version = version; net.myName = name || "Player"; net.state = "signaling";
+    openSocket(String(code).toUpperCase(), "join", null);
+  };
+  net.leave = function () { net.reset(); };
+  // host stops taking new players (game started)
+  net.lock = function () { if (net.isHost && net.ws) { try { net.ws.onclose = null; net.ws.close(); } catch (e) {} net.ws = null; } };
+  net.send = function (to, bytes, reliable) {
+    var send1 = function (p) {
+      var dc = reliable ? p.r : p.u;
+      if (dc && dc.readyState === "open") dc.send(bytes);
+    };
+    if (to === 255) { for (var id in net.peers) if (net.peers[id].done) send1(net.peers[id]); }
+    else { var p = net.peers[to]; if (p && p.done) send1(p); }
+  };
+  net.pollEvent = function () { return net.events.length ? net.events.shift() : ""; };
+  net.pollData = function () { return net.inbox.length ? net.inbox.shift() : null; };
+})();
+
+    </script>
+    <script>
       var canvas = document.querySelector("#game");
       var buildUrl = "Build";
-      var loaderUrl = buildUrl + "/6624d8059a847b06a19092a2ee642dae.loader.js";
+      var loaderUrl = buildUrl + "/3c5c6c89e777b97f15578e7e11f3d463.loader.js";
       var config = {
         arguments: [],
-        dataUrl: buildUrl + "/c66f0a2f286e43fff73e5902d45d1b82.data",
-        frameworkUrl: buildUrl + "/4172e223905e299de986f3f174e7602d.framework.js",
-        codeUrl: buildUrl + "/64f47c614ef09ec9179a7140368f9032.wasm",
+        dataUrl: buildUrl + "/a384808c32ac418ae170b715fcaabe80.data",
+        frameworkUrl: buildUrl + "/10f74a4808a6c2e87f45d68331edad20.framework.js",
+        codeUrl: buildUrl + "/71d4662bc501e4fe240773d122320859.wasm",
         streamingAssetsUrl: "StreamingAssets",
         companyName: "TemmieManz",
         productName: "Bigus Run",
